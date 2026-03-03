@@ -1,4 +1,49 @@
 /**
+ * Fetch a URL through a chain of CORS proxies, returning the raw response text.
+ * Tries each proxy in order and returns the first successful result.
+ */
+async function fetchViaProxy(targetUrl: string): Promise<string | null> {
+  // Proxy 1: allorigins (wraps response in JSON { contents: "..." })
+  try {
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const data = await res.json();
+      const contents = (data?.contents ?? "").trim();
+      if (contents) return contents;
+    }
+  } catch {
+    // fall through to next proxy
+  }
+
+  // Proxy 2: corsproxy.io (transparent proxy — returns raw response)
+  try {
+    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`;
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const text = (await res.text()).trim();
+      if (text) return text;
+    }
+  } catch {
+    // fall through to next proxy
+  }
+
+  // Proxy 3: thingproxy (transparent proxy)
+  try {
+    const proxyUrl = `https://thingproxy.freeboard.io/fetch/${targetUrl}`;
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const text = (await res.text()).trim();
+      if (text) return text;
+    }
+  } catch {
+    // all proxies failed
+  }
+
+  return null;
+}
+
+/**
  * Fetch latest NAV for a mutual fund scheme from mfapi.in
  */
 export async function fetchMFNAV(schemeCode: string): Promise<number | null> {
@@ -55,17 +100,12 @@ export async function searchMutualFunds(
  * Fetch latest NAV for an NPS scheme from npsnav.in/api
  * API: GET https://npsnav.in/api/{pfmId}
  * Response: plain number string e.g. "55.074"
- * Fetched via allorigins proxy to avoid CORS restrictions.
+ * Fetched via CORS proxies to avoid CORS restrictions.
  */
 export async function fetchNPSNav(pfmId: string): Promise<number | null> {
   try {
     const targetUrl = `https://npsnav.in/api/${encodeURIComponent(pfmId)}`;
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    // allorigins wraps the response body in data.contents (a string)
-    const raw = (data?.contents ?? "").trim();
+    const raw = await fetchViaProxy(targetUrl);
     if (!raw) return null;
     // The API returns a plain number string like "55.074"
     // but may also return JSON – handle both cases
@@ -128,19 +168,38 @@ export async function fetchSGBPrice(symbol: string): Promise<number | null> {
 }
 
 /**
- * Fetch current stock/ETF price via allorigins proxy → Yahoo Finance.
+ * Fetch current stock/ETF price via CORS proxies → Yahoo Finance.
+ * Tries multiple Yahoo Finance endpoints and multiple proxies for resilience.
  */
 export async function fetchStockPrice(symbol: string): Promise<number | null> {
-  try {
-    const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`;
-    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const contents = JSON.parse(data.contents ?? "{}");
-    const price = contents?.quoteResponse?.result?.[0]?.regularMarketPrice;
-    return typeof price === "number" ? price : null;
-  } catch {
-    return null;
+  // Try v7 endpoint first, then v8 as fallback
+  const yahooUrls = [
+    `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`,
+    `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`,
+    `https://query1.finance.yahoo.com/v8/finance/quote?symbols=${encodeURIComponent(symbol)}`,
+  ];
+
+  for (const yahooUrl of yahooUrls) {
+    try {
+      const raw = await fetchViaProxy(yahooUrl);
+      if (!raw) continue;
+      // raw may itself be a JSON string
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const price = (
+        parsed as {
+          quoteResponse?: { result?: { regularMarketPrice?: number }[] };
+        }
+      )?.quoteResponse?.result?.[0]?.regularMarketPrice;
+      if (typeof price === "number") return price;
+    } catch {
+      // try next URL
+    }
   }
+
+  return null;
 }
