@@ -249,7 +249,24 @@ export default function App() {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const profileRef = useRef(false);
+  // Track which principal we last loaded the profile for so we don't re-run
+  // on spurious actor re-fetches for the same authenticated user.
+  const profilePrincipalRef = useRef<string | null>(null);
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+
+  // Track whether the II hook has completed its first initialization pass.
+  // Once true it never goes false, preventing re-init loops from flipping
+  // isLoading back on after the first successful boot.
+  // Also set ready immediately if we already have an identity (e.g. cached login).
+  const [iiReady, setIiReady] = useState(false);
+  const iiReadyRef = useRef(false);
+  useEffect(() => {
+    // Mark ready as soon as: (a) init completes, OR (b) we already have an identity
+    if ((!isInitializing || identity) && !iiReadyRef.current) {
+      iiReadyRef.current = true;
+      setIiReady(true);
+    }
+  }, [isInitializing, identity]);
 
   const isAuthenticated = !!identity;
 
@@ -274,9 +291,15 @@ export default function App() {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }
 
-  // Load user profile when actor becomes available and user is authenticated
+  // Load user profile when actor becomes available and user is authenticated.
+  // Guard with a per-principal flag so spurious re-renders of the actor
+  // (caused by the II hook's re-init loop) don't block the loading screen.
   useEffect(() => {
-    if (!actor || !identity || isActorFetching || profileRef.current) return;
+    if (!actor || !identity || isActorFetching) return;
+    const principal = identity.getPrincipal().toString();
+    // Already loaded (or loading) for this principal — skip
+    if (profilePrincipalRef.current === principal) return;
+    profilePrincipalRef.current = principal;
     profileRef.current = true;
 
     setIsLoadingProfile(true);
@@ -287,7 +310,7 @@ export default function App() {
       setProfileTimedOut(true);
       setProfileLoaded(true);
       setIsLoadingProfile(false);
-    }, 15000);
+    }, 8000);
 
     actor
       .getCallerUserProfile()
@@ -316,10 +339,13 @@ export default function App() {
       setProfileTimedOut(false);
       setLoadingTimedOut(false);
       profileRef.current = false;
+      profilePrincipalRef.current = null;
+      iiReadyRef.current = false;
+      setIiReady(false);
     }
   }, [identity]);
 
-  // Loading timeout escape hatch — 20 seconds
+  // Loading timeout escape hatch — 12 seconds
   useEffect(() => {
     if (!isAuthenticated || profileLoaded) return;
     const timer = setTimeout(() => {
@@ -328,7 +354,7 @@ export default function App() {
       setProfileTimedOut(true);
       setProfileLoaded(true);
       setIsLoadingProfile(false);
-    }, 20000);
+    }, 12000);
     return () => clearTimeout(timer);
   }, [isAuthenticated, profileLoaded]);
 
@@ -345,10 +371,16 @@ export default function App() {
     }
   }
 
+  // We are loading if:
+  // 1. The overall timeout hasn't fired yet, AND
+  // 2. Either the II hook hasn't settled its first init pass, OR
+  //    we're authenticated but haven't finished loading actor+profile yet
+  // IMPORTANT: once profileLoaded is true, we are never "loading" again even if
+  // isActorFetching or isInitializing flip back due to the II re-init loop.
   const isLoading =
     !loadingTimedOut &&
-    (isInitializing ||
-      (isAuthenticated && (isActorFetching || isLoadingProfile)));
+    !profileLoaded &&
+    (!iiReady || (isAuthenticated && (isActorFetching || isLoadingProfile)));
 
   // Show loading during initialization
   if (isLoading) {
