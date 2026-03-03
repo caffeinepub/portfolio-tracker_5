@@ -1,6 +1,8 @@
 import type { Theme } from "@/App";
 import { Button } from "@/components/ui/button";
+import { useInternetIdentity } from "@/hooks/useInternetIdentity";
 import { cn } from "@/lib/utils";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   BarChart2,
   ChevronLeft,
@@ -9,6 +11,7 @@ import {
   Gem,
   Landmark,
   LayoutDashboard,
+  LogOut,
   Menu,
   Moon,
   Receipt,
@@ -71,6 +74,7 @@ interface LayoutProps {
   children: React.ReactNode;
   theme: Theme;
   onToggleTheme: () => void;
+  userName?: string;
 }
 
 export default function Layout({
@@ -79,9 +83,17 @@ export default function Layout({
   children,
   theme,
   onToggleTheme,
+  userName,
 }: LayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { clear } = useInternetIdentity();
+  const queryClient = useQueryClient();
+
+  function handleLogout() {
+    queryClient.clear();
+    clear();
+  }
 
   const SidebarContent = () => (
     <>
@@ -143,6 +155,38 @@ export default function Layout({
           );
         })}
       </nav>
+
+      {/* User Section */}
+      {userName && (
+        <div
+          className={cn(
+            "px-4 py-3 border-t border-sidebar-border flex",
+            collapsed ? "justify-center" : "justify-between items-center gap-2",
+          )}
+        >
+          {!collapsed && (
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-foreground truncate">
+                {userName}
+              </p>
+              <p className="text-[10px] text-muted-foreground">Logged in</p>
+            </div>
+          )}
+          <button
+            data-ocid="auth.logout.button"
+            type="button"
+            onClick={handleLogout}
+            title="Logout"
+            className={cn(
+              "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors",
+              "border border-sidebar-border hover:bg-destructive/15 hover:border-destructive/30 text-muted-foreground hover:text-destructive",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Theme Toggle */}
       <div

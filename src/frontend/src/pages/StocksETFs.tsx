@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { type StockHolding, usePortfolio } from "@/context/PortfolioContext";
 import { cn } from "@/lib/utils";
 import {
+  calcXIRR,
   formatDate,
   formatINR,
   formatINRWithSign,
@@ -30,6 +31,7 @@ import {
 import {
   BarChart2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Pencil,
   Plus,
@@ -38,6 +40,94 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+
+// ─── Types ─────────────────────────────────────────────────────────────────
+
+interface StockGroup {
+  symbol: string;
+  exchange: string;
+  companyName: string;
+  assetType: "stock" | "etf";
+  currentPrice: number;
+  totalQty: number;
+  avgBuyPrice: number;
+  totalInvested: number;
+  currentValue: number;
+  xirr: number;
+  holdings: StockHolding[];
+}
+
+type SortField =
+  | "company"
+  | "currentPrice"
+  | "qty"
+  | "invested"
+  | "value"
+  | "gain"
+  | "gainPct";
+type SortDir = "asc" | "desc";
+
+// ─── Group By Symbol ────────────────────────────────────────────────────────
+
+function groupBySymbol(
+  holdings: StockHolding[],
+  assetType: "stock" | "etf",
+): StockGroup[] {
+  const filtered = holdings.filter((h) => h.assetType === assetType);
+  const map = new Map<string, StockHolding[]>();
+  for (const h of filtered) {
+    const existing = map.get(h.symbol) ?? [];
+    existing.push(h);
+    map.set(h.symbol, existing);
+  }
+
+  const today = todayStr();
+  const groups: StockGroup[] = [];
+
+  for (const [symbol, list] of map.entries()) {
+    const totalQty = list.reduce((s, h) => s + h.quantity, 0);
+    const totalInvested = list.reduce((s, h) => s + h.quantity * h.buyPrice, 0);
+    const avgBuyPrice = totalQty > 0 ? totalInvested / totalQty : 0;
+    const currentPrice = list[list.length - 1].currentPrice;
+    const currentValue = totalQty * currentPrice;
+
+    const sortedByDate = [...list].sort(
+      (a, b) => new Date(a.buyDate).getTime() - new Date(b.buyDate).getTime(),
+    );
+
+    const cashflows: { amount: number; date: string }[] = [
+      ...sortedByDate.map((h) => ({
+        amount: -(h.quantity * h.buyPrice),
+        date: h.buyDate,
+      })),
+      { amount: currentValue, date: today },
+    ];
+
+    let xirr = 0;
+    try {
+      const raw = calcXIRR(cashflows);
+      xirr = Number.isFinite(raw) && !Number.isNaN(raw) ? raw : 0;
+    } catch {
+      xirr = 0;
+    }
+
+    groups.push({
+      symbol,
+      exchange: list[0].exchange,
+      companyName: list[0].companyName,
+      assetType,
+      currentPrice,
+      totalQty,
+      avgBuyPrice,
+      totalInvested,
+      currentValue,
+      xirr,
+      holdings: sortedByDate,
+    });
+  }
+
+  return groups;
+}
 
 // ─── Add/Edit Modal ───────────────────────────────────────────────────────
 
@@ -64,27 +154,21 @@ interface StockModalProps {
   onClose: () => void;
   assetType: "stock" | "etf";
   editData?: StockHolding | null;
+  /** When set, pre-fill symbol/company – "Add Buy" mode */
+  addBuyData?: { symbol: string; exchange: string; companyName: string } | null;
 }
 
-function StockModal({ open, onClose, assetType, editData }: StockModalProps) {
+function StockModal({
+  open,
+  onClose,
+  assetType,
+  editData,
+  addBuyData,
+}: StockModalProps) {
   const { addStock, updateStock, addTransaction } = usePortfolio();
   const [form, setForm] = useState<StockFormData>(() => EMPTY_FORM(assetType));
 
-  // Sync form with editData
-  useState(() => {
-    if (editData) {
-      setForm({
-        symbol: editData.symbol,
-        exchange: editData.exchange,
-        companyName: editData.companyName,
-        quantity: String(editData.quantity),
-        buyPrice: String(editData.buyPrice),
-        buyDate: editData.buyDate,
-      });
-    } else {
-      setForm(EMPTY_FORM(assetType));
-    }
-  });
+  const isBuyMode = !!addBuyData && !editData;
 
   // Reset on open
   const [lastOpen, setLastOpen] = useState(false);
@@ -99,6 +183,13 @@ function StockModal({ open, onClose, assetType, editData }: StockModalProps) {
           quantity: String(editData.quantity),
           buyPrice: String(editData.buyPrice),
           buyDate: editData.buyDate,
+        });
+      } else if (addBuyData) {
+        setForm({
+          ...EMPTY_FORM(assetType),
+          symbol: addBuyData.symbol,
+          exchange: addBuyData.exchange,
+          companyName: addBuyData.companyName,
         });
       } else {
         setForm(EMPTY_FORM(assetType));
@@ -154,16 +245,25 @@ function StockModal({ open, onClose, assetType, editData }: StockModalProps) {
         quantity: qty,
         price,
         date: form.buyDate,
-        notes: `${assetType === "etf" ? "ETF" : "Stock"} purchase`,
+        notes: isBuyMode
+          ? `${assetType === "etf" ? "ETF" : "Stock"} buy`
+          : `${assetType === "etf" ? "ETF" : "Stock"} purchase`,
       });
       toast.success(
-        `${assetType === "etf" ? "ETF" : "Stock"} added to portfolio.`,
+        isBuyMode
+          ? "Buy transaction added."
+          : `${assetType === "etf" ? "ETF" : "Stock"} added to portfolio.`,
       );
     }
     onClose();
   }
 
   const typeLabel = assetType === "etf" ? "ETF" : "Stock";
+  const modalTitle = editData
+    ? `Edit ${typeLabel} Transaction`
+    : isBuyMode
+      ? `Add Buy – ${addBuyData?.companyName}`
+      : `Add ${typeLabel}`;
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -173,57 +273,76 @@ function StockModal({ open, onClose, assetType, editData }: StockModalProps) {
       >
         <DialogHeader>
           <DialogTitle className="font-display text-lg">
-            {editData ? `Edit ${typeLabel}` : `Add ${typeLabel}`}
+            {modalTitle}
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          {/* Symbol + Exchange – only for new non-buy mode */}
+          {!isBuyMode && !editData && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="s-symbol">Symbol</Label>
+                <Input
+                  id="s-symbol"
+                  placeholder={
+                    assetType === "etf" ? "NSE:NIFTYBEES" : "NSE:ICICIBANK"
+                  }
+                  className="bg-background border-border uppercase"
+                  value={form.symbol}
+                  onChange={(e) => handleField("symbol", e.target.value)}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Format: NSE:ICICIBANK or BSE:RELIANCE
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="s-exchange">Exchange</Label>
+                <Select
+                  value={form.exchange}
+                  onValueChange={(v) => handleField("exchange", v)}
+                >
+                  <SelectTrigger
+                    id="s-exchange"
+                    className="bg-background border-border"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border-border">
+                    <SelectItem value="NSE">NSE</SelectItem>
+                    <SelectItem value="BSE">BSE</SelectItem>
+                    <SelectItem value="US">US</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          {/* Symbol display for buy/edit mode */}
+          {(isBuyMode || editData) && (
             <div className="space-y-1.5">
-              <Label htmlFor="s-symbol">Symbol</Label>
-              <Input
-                id="s-symbol"
-                placeholder={
-                  assetType === "etf" ? "NSE:NIFTYBEES" : "NSE:ICICIBANK"
-                }
-                className="bg-background border-border uppercase"
-                value={form.symbol}
-                onChange={(e) => handleField("symbol", e.target.value)}
-              />
-              <p className="text-[10px] text-muted-foreground">
-                Format: NSE:ICICIBANK or BSE:RELIANCE
+              <Label>Symbol</Label>
+              <p className="text-sm text-muted-foreground bg-background rounded-lg px-3 py-2 border border-border font-mono">
+                {form.symbol}
+                <span className="text-xs ml-2 opacity-60 font-sans">
+                  · {form.exchange}
+                </span>
               </p>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="s-exchange">Exchange</Label>
-              <Select
-                value={form.exchange}
-                onValueChange={(v) => handleField("exchange", v)}
-              >
-                <SelectTrigger
-                  id="s-exchange"
-                  className="bg-background border-border"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
-                  <SelectItem value="NSE">NSE</SelectItem>
-                  <SelectItem value="BSE">BSE</SelectItem>
-                  <SelectItem value="US">US</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          )}
 
-          <div className="space-y-1.5">
-            <Label htmlFor="s-name">Company Name</Label>
-            <Input
-              id="s-name"
-              placeholder="Reliance Industries"
-              className="bg-background border-border"
-              value={form.companyName}
-              onChange={(e) => handleField("companyName", e.target.value)}
-            />
-          </div>
+          {/* Company Name – only for new non-buy mode */}
+          {!isBuyMode && (
+            <div className="space-y-1.5">
+              <Label htmlFor="s-name">Company Name</Label>
+              <Input
+                id="s-name"
+                placeholder="Reliance Industries"
+                className="bg-background border-border"
+                value={form.companyName}
+                onChange={(e) => handleField("companyName", e.target.value)}
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -285,7 +404,11 @@ function StockModal({ open, onClose, assetType, editData }: StockModalProps) {
               }
               className="bg-primary text-primary-foreground"
             >
-              {editData ? "Save Changes" : `Add ${typeLabel}`}
+              {editData
+                ? "Save Changes"
+                : isBuyMode
+                  ? "Add Buy"
+                  : `Add ${typeLabel}`}
             </Button>
           </DialogFooter>
         </form>
@@ -294,35 +417,30 @@ function StockModal({ open, onClose, assetType, editData }: StockModalProps) {
   );
 }
 
-// ─── StocksETFs Page ──────────────────────────────────────────────────────
-
-type SortField =
-  | "company"
-  | "currentPrice"
-  | "qty"
-  | "invested"
-  | "value"
-  | "gain"
-  | "gainPct";
-type SortDir = "asc" | "desc";
+// ─── Holdings Table ─────────────────────────────────────────────────────────
 
 interface HoldingsTableProps {
-  holdings: StockHolding[];
-  onEdit: (h: StockHolding) => void;
-  onDelete: (id: string, name: string) => void;
+  groups: StockGroup[];
   assetType: "stock" | "etf";
   isLoading: boolean;
+  onEdit: (h: StockHolding) => void;
+  onDelete: (id: string, name: string) => void;
+  onDeleteGroup: (group: StockGroup) => void;
+  onAddBuy: (group: StockGroup) => void;
 }
 
 function HoldingsTable({
-  holdings,
-  onEdit,
-  onDelete,
+  groups,
   assetType,
   isLoading,
+  onEdit,
+  onDelete,
+  onDeleteGroup,
+  onAddBuy,
 }: HoldingsTableProps) {
   const [sortField, setSortField] = useState<SortField>("value");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   function handleSort(f: SortField) {
     if (sortField === f) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -332,22 +450,30 @@ function HoldingsTable({
     }
   }
 
-  const sorted = [...holdings].sort((a, b) => {
-    const investedA = a.quantity * a.buyPrice;
-    const investedB = b.quantity * b.buyPrice;
-    const valueA = a.quantity * a.currentPrice;
-    const valueB = b.quantity * b.currentPrice;
-    const gainA = valueA - investedA;
-    const gainB = valueB - investedB;
-    const gainPctA = investedA > 0 ? (gainA / investedA) * 100 : 0;
-    const gainPctB = investedB > 0 ? (gainB / investedB) * 100 : 0;
+  function toggleExpand(symbol: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(symbol)) {
+        next.delete(symbol);
+      } else {
+        next.add(symbol);
+      }
+      return next;
+    });
+  }
+
+  const sorted = [...groups].sort((a, b) => {
+    const gainA = a.currentValue - a.totalInvested;
+    const gainB = b.currentValue - b.totalInvested;
+    const gainPctA = a.totalInvested > 0 ? (gainA / a.totalInvested) * 100 : 0;
+    const gainPctB = b.totalInvested > 0 ? (gainB / b.totalInvested) * 100 : 0;
 
     const map: Record<SortField, number> = {
       company: a.companyName.localeCompare(b.companyName),
       currentPrice: a.currentPrice - b.currentPrice,
-      qty: a.quantity - b.quantity,
-      invested: investedA - investedB,
-      value: valueA - valueB,
+      qty: a.totalQty - b.totalQty,
+      invested: a.totalInvested - b.totalInvested,
+      value: a.currentValue - b.currentValue,
       gain: gainA - gainB,
       gainPct: gainPctA - gainPctB,
     };
@@ -402,7 +528,7 @@ function HoldingsTable({
     );
   }
 
-  if (holdings.length === 0) {
+  if (groups.length === 0) {
     return (
       <div
         data-ocid={`${assetType === "etf" ? "etf" : "stock"}.empty_state`}
@@ -421,18 +547,23 @@ function HoldingsTable({
       <table className="w-full text-sm">
         <thead className="border-b border-border">
           <tr>
+            {/* Expand chevron column */}
+            <th className="w-8 pl-2" />
             <Th field="company">Symbol / Company</Th>
             <Th field="currentPrice" right>
-              Current Price
+              Curr. Price
             </Th>
             <Th field="qty" right>
-              Qty
+              Total Qty
             </Th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+              Avg Buy
+            </th>
             <Th field="invested" right>
               Invested
             </Th>
             <Th field="value" right>
-              Current Value
+              Curr. Value
             </Th>
             <Th field="gain" right>
               Gain / Loss
@@ -446,78 +577,246 @@ function HoldingsTable({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((s, i) => {
-            const invested = s.quantity * s.buyPrice;
-            const value = s.quantity * s.currentPrice;
-            const gain = value - invested;
-            const gainPct = invested > 0 ? (gain / invested) * 100 : 0;
-            const idx = i + 1;
+          {sorted.map((group, gi) => {
+            const gain = group.currentValue - group.totalInvested;
+            const gainPct =
+              group.totalInvested > 0 ? (gain / group.totalInvested) * 100 : 0;
+            const isExpanded = expandedGroups.has(group.symbol);
+            const idx = gi + 1;
+            const showXIRR =
+              group.xirr !== 0 &&
+              Number.isFinite(group.xirr) &&
+              !Number.isNaN(group.xirr);
+
             return (
-              <tr
-                key={s.id}
-                data-ocid={`${assetType === "etf" ? "etf" : "stock"}.item.${idx}`}
-                className="border-b border-border/50 hover:bg-accent/30 transition-colors"
-              >
-                <td className="px-4 py-3">
-                  <p className="font-semibold text-foreground">{s.symbol}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {s.companyName} · {s.exchange}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatDate(s.buyDate)}
-                  </p>
-                </td>
-                <td className="px-3 py-3 text-right number-tabular font-semibold">
-                  {formatINR(s.currentPrice)}
-                </td>
-                <td className="px-3 py-3 text-right number-tabular text-muted-foreground">
-                  {s.quantity}
-                </td>
-                <td className="px-3 py-3 text-right number-tabular text-muted-foreground">
-                  {formatINR(invested)}
-                </td>
-                <td className="px-3 py-3 text-right number-tabular font-semibold">
-                  {formatINR(value)}
-                </td>
-                <td
-                  className={cn(
-                    "px-3 py-3 text-right number-tabular font-semibold",
-                    gainLossClass(gain),
-                  )}
+              <>
+                {/* ── Group Row ── */}
+                <tr
+                  key={`group-${group.symbol}`}
+                  data-ocid={`${assetType === "etf" ? "etf" : "stock"}.item.${idx}`}
+                  className="border-b border-border/50 hover:bg-accent/20 transition-colors"
                 >
-                  {formatINRWithSign(gain)}
-                </td>
-                <td
-                  className={cn(
-                    "px-3 py-3 text-right number-tabular font-semibold",
-                    gainLossClass(gain),
-                  )}
-                >
-                  {formatPercent(gainPct)}
-                </td>
-                <td className="px-3 py-3 pr-4">
-                  <div className="flex items-center justify-end gap-1.5">
-                    <Button
-                      data-ocid={`${assetType === "etf" ? "etf" : "stock"}.edit_button.${idx}`}
-                      variant="ghost"
-                      size="icon"
-                      className="w-7 h-7 hover:bg-accent"
-                      onClick={() => onEdit(s)}
+                  {/* Expand chevron */}
+                  <td className="pl-2 py-3 w-8">
+                    <button
+                      type="button"
+                      data-ocid={`${assetType}.group.expand_button.${idx}`}
+                      onClick={() => toggleExpand(group.symbol)}
+                      className="flex items-center justify-center w-6 h-6 rounded hover:bg-accent transition-colors text-muted-foreground"
+                      aria-label={
+                        isExpanded
+                          ? "Collapse transactions"
+                          : "Expand transactions"
+                      }
                     >
-                      <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
-                    </Button>
-                    <Button
-                      data-ocid={`${assetType === "etf" ? "etf" : "stock"}.delete_button.${idx}`}
-                      variant="ghost"
-                      size="icon"
-                      className="w-7 h-7 hover:bg-loss/20 hover:text-loss"
-                      onClick={() => onDelete(s.id, s.companyName)}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </td>
-              </tr>
+                      <ChevronRight
+                        className={cn(
+                          "w-4 h-4 transition-transform duration-200",
+                          isExpanded && "rotate-90",
+                        )}
+                      />
+                    </button>
+                  </td>
+
+                  {/* Symbol / Company */}
+                  <td className="px-3 py-3">
+                    <p className="font-semibold text-foreground font-mono leading-snug">
+                      {group.symbol}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {group.companyName} · {group.exchange} ·{" "}
+                      {group.holdings.length} buy
+                      {group.holdings.length !== 1 ? "s" : ""}
+                    </p>
+                  </td>
+
+                  {/* Current Price */}
+                  <td className="px-3 py-3 text-right number-tabular font-semibold">
+                    {formatINR(group.currentPrice)}
+                  </td>
+
+                  {/* Total Qty */}
+                  <td className="px-3 py-3 text-right number-tabular text-muted-foreground">
+                    {group.totalQty}
+                  </td>
+
+                  {/* Avg Buy */}
+                  <td className="px-3 py-3 text-right number-tabular text-muted-foreground">
+                    {formatINR(group.avgBuyPrice)}
+                  </td>
+
+                  {/* Invested */}
+                  <td className="px-3 py-3 text-right number-tabular text-muted-foreground">
+                    {formatINR(group.totalInvested)}
+                  </td>
+
+                  {/* Current Value */}
+                  <td className="px-3 py-3 text-right number-tabular font-semibold">
+                    {formatINR(group.currentValue)}
+                  </td>
+
+                  {/* Gain / Loss */}
+                  <td
+                    className={cn(
+                      "px-3 py-3 text-right number-tabular font-semibold",
+                      gainLossClass(gain),
+                    )}
+                  >
+                    {formatINRWithSign(gain)}
+                  </td>
+
+                  {/* Returns */}
+                  <td
+                    className={cn(
+                      "px-3 py-3 text-right number-tabular",
+                      gainLossClass(gain),
+                    )}
+                  >
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className="font-semibold">
+                        {formatPercent(gainPct)}
+                      </span>
+                      <span
+                        className={cn(
+                          "text-xs",
+                          showXIRR
+                            ? gainLossClass(group.xirr)
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        {showXIRR ? `${group.xirr.toFixed(1)}% XIRR` : "--"}
+                      </span>
+                    </div>
+                  </td>
+
+                  {/* Actions */}
+                  <td className="px-3 py-3 pr-4">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        data-ocid={`${assetType}.add_buy_button.${idx}`}
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-primary hover:bg-primary/10 gap-1"
+                        onClick={() => onAddBuy(group)}
+                      >
+                        <Plus className="w-3 h-3" />
+                        Buy
+                      </Button>
+                      <Button
+                        data-ocid={`${assetType}.group.delete_button.${idx}`}
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 hover:bg-loss/20 hover:text-loss"
+                        onClick={() => onDeleteGroup(group)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+
+                {/* ── Expanded Sub-Rows ── */}
+                {isExpanded &&
+                  group.holdings.map((h, ti) => {
+                    const txInvested = h.quantity * h.buyPrice;
+                    const txValue = h.quantity * group.currentPrice;
+                    const txGain = txValue - txInvested;
+                    const txGainPct =
+                      txInvested > 0 ? (txGain / txInvested) * 100 : 0;
+                    const txIdx = ti + 1;
+                    const isLastSub = ti === group.holdings.length - 1;
+
+                    return (
+                      <tr
+                        key={h.id}
+                        className={cn(
+                          "bg-muted/30 transition-colors hover:bg-muted/50",
+                          !isLastSub && "border-b border-border/30",
+                        )}
+                      >
+                        {/* indent spacer */}
+                        <td className="w-8" />
+
+                        {/* Date */}
+                        <td className="px-3 py-2.5 pl-6">
+                          <div className="flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 flex-shrink-0" />
+                            <p className="text-xs text-muted-foreground font-medium">
+                              {formatDate(h.buyDate)}
+                            </p>
+                          </div>
+                        </td>
+
+                        {/* curr price (alignment) */}
+                        <td className="px-3 py-2.5 text-right text-xs text-muted-foreground number-tabular" />
+
+                        {/* Qty */}
+                        <td className="px-3 py-2.5 text-right text-xs number-tabular text-muted-foreground">
+                          {h.quantity}
+                        </td>
+
+                        {/* Buy Price */}
+                        <td className="px-3 py-2.5 text-right text-xs number-tabular text-muted-foreground">
+                          {formatINR(h.buyPrice)}
+                        </td>
+
+                        {/* Invested */}
+                        <td className="px-3 py-2.5 text-right text-xs number-tabular text-muted-foreground">
+                          {formatINR(txInvested)}
+                        </td>
+
+                        {/* Current Value */}
+                        <td className="px-3 py-2.5 text-right text-xs number-tabular">
+                          {formatINR(txValue)}
+                        </td>
+
+                        {/* Gain / Loss */}
+                        <td
+                          className={cn(
+                            "px-3 py-2.5 text-right text-xs number-tabular font-medium",
+                            gainLossClass(txGain),
+                          )}
+                        >
+                          {formatINRWithSign(txGain)}
+                        </td>
+
+                        {/* Returns % */}
+                        <td
+                          className={cn(
+                            "px-3 py-2.5 text-right text-xs number-tabular",
+                            gainLossClass(txGain),
+                          )}
+                        >
+                          {formatPercent(txGainPct)}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-3 py-2.5 pr-4">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              data-ocid={`${assetType}.txn.edit_button.${idx}.${txIdx}`}
+                              variant="ghost"
+                              size="icon"
+                              className="w-6 h-6 hover:bg-accent"
+                              onClick={() => onEdit(h)}
+                            >
+                              <Pencil className="w-3 h-3 text-muted-foreground" />
+                            </Button>
+                            <Button
+                              data-ocid={`${assetType}.txn.delete_button.${idx}.${txIdx}`}
+                              variant="ghost"
+                              size="icon"
+                              className="w-6 h-6 hover:bg-loss/20 hover:text-loss"
+                              onClick={() => onDelete(h.id, h.companyName)}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </>
             );
           })}
         </tbody>
@@ -539,10 +838,18 @@ export default function StocksETFs() {
   const [activeTab, setActiveTab] = useState<"stock" | "etf">("stock");
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<StockHolding | null>(null);
+  const [addBuyTarget, setAddBuyTarget] = useState<{
+    symbol: string;
+    exchange: string;
+    companyName: string;
+  } | null>(null);
+
+  const stockGroups = groupBySymbol(stocks, "stock");
+  const etfGroups = groupBySymbol(stocks, "etf");
+  const currentGroups = activeTab === "stock" ? stockGroups : etfGroups;
 
   const stocksList = stocks.filter((s) => s.assetType === "stock");
   const etfsList = stocks.filter((s) => s.assetType === "etf");
-  const currentList = activeTab === "stock" ? stocksList : etfsList;
 
   const activeValue =
     activeTab === "stock" ? totals.stockValue : totals.etfValue;
@@ -553,15 +860,40 @@ export default function StocksETFs() {
     activeInvested > 0 ? (activeGain / activeInvested) * 100 : 0;
 
   function handleDelete(id: string, name: string) {
-    if (confirm(`Remove "${name}" from portfolio?`)) {
+    if (confirm(`Remove this transaction for "${name}"?`)) {
       deleteStock(id);
-      toast.success("Holding removed.");
+      toast.success("Transaction removed.");
+    }
+  }
+
+  function handleDeleteGroup(group: StockGroup) {
+    if (
+      confirm(
+        `Delete ALL ${group.holdings.length} transaction(s) for "${group.companyName}"? This cannot be undone.`,
+      )
+    ) {
+      for (const h of group.holdings) {
+        deleteStock(h.id);
+      }
+      toast.success(`${group.companyName} removed from portfolio.`);
     }
   }
 
   function handleEdit(h: StockHolding) {
     setEditTarget(h);
+    setAddBuyTarget(null);
     setActiveTab(h.assetType);
+    setModalOpen(true);
+  }
+
+  function handleAddBuy(group: StockGroup) {
+    setEditTarget(null);
+    setAddBuyTarget({
+      symbol: group.symbol,
+      exchange: group.exchange,
+      companyName: group.companyName,
+    });
+    setActiveTab(group.assetType);
     setModalOpen(true);
   }
 
@@ -572,7 +904,8 @@ export default function StocksETFs() {
         <div>
           <h1 className="text-2xl font-display font-bold">Stocks & ETFs</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {stocksList.length} stocks, {etfsList.length} ETFs ·{" "}
+            {stockGroups.length} stocks ({stocksList.length} txns),{" "}
+            {etfGroups.length} ETFs ({etfsList.length} txns) ·{" "}
             <span
               className={gainLossClass(
                 totals.stockValue +
@@ -616,6 +949,7 @@ export default function StocksETFs() {
             }
             onClick={() => {
               setEditTarget(null);
+              setAddBuyTarget(null);
               setModalOpen(true);
             }}
             className="bg-primary text-primary-foreground gap-2"
@@ -641,7 +975,7 @@ export default function StocksETFs() {
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            Stocks ({stocksList.length})
+            Stocks ({stockGroups.length})
           </button>
           <button
             data-ocid="etfs.tab"
@@ -654,7 +988,7 @@ export default function StocksETFs() {
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            ETFs ({etfsList.length})
+            ETFs ({etfGroups.length})
           </button>
         </div>
 
@@ -685,16 +1019,21 @@ export default function StocksETFs() {
       <Card className="bg-card border-border shadow-card">
         <CardHeader className="pb-2">
           <CardTitle className="text-base font-semibold">
-            {activeTab === "etf" ? "ETF" : "Stock"} Holdings
+            {activeTab === "etf" ? "ETF" : "Stock"} Holdings{" "}
+            <span className="text-xs font-normal text-muted-foreground ml-1">
+              (consolidated by symbol)
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <HoldingsTable
-            holdings={currentList}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
+            groups={currentGroups}
             assetType={activeTab}
             isLoading={isRefreshingStocks}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            onDeleteGroup={handleDeleteGroup}
+            onAddBuy={handleAddBuy}
           />
         </CardContent>
       </Card>
@@ -704,9 +1043,11 @@ export default function StocksETFs() {
         onClose={() => {
           setModalOpen(false);
           setEditTarget(null);
+          setAddBuyTarget(null);
         }}
         assetType={activeTab}
         editData={editTarget}
+        addBuyData={addBuyTarget}
       />
     </div>
   );

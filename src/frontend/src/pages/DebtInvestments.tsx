@@ -57,14 +57,6 @@ function calcDebtCurrentValue(holding: DebtHolding): number {
       return calcSimpleInterest(holding.currentValue, holding.interestRate, 0);
       // Use stored currentValue as base (user-maintained)
     }
-    case "sgb": {
-      const units = Number(holding.metadata.units || 1);
-      const issuePrice = Number(
-        holding.metadata.issuePrice || holding.principal / units,
-      );
-      const accrued = units * issuePrice * (holding.interestRate / 100) * years;
-      return holding.currentValue + accrued;
-    }
     default:
       return calcSimpleInterest(holding.principal, holding.interestRate, years);
   }
@@ -84,15 +76,6 @@ function calcMaturityValue(holding: DebtHolding): number {
         years,
         freq,
       );
-    }
-    case "sgb": {
-      const units = Number(holding.metadata.units || 1);
-      const issuePrice = Number(
-        holding.metadata.issuePrice || holding.principal,
-      );
-      const maturity = units * issuePrice;
-      const interest = maturity * (holding.interestRate / 100) * years;
-      return maturity + interest;
     }
     default:
       return calcSimpleInterest(holding.principal, holding.interestRate, years);
@@ -121,7 +104,6 @@ interface DebtFormData {
 
 function emptyForm(debtType: DebtType): DebtFormData {
   const defaults: Record<DebtType, Partial<DebtFormData>> = {
-    sgb: { interestRate: "2.5", maturityDate: "", units: "10" },
     epf: {
       interestRate: "8.25",
       maturityDate: "2045-04-01",
@@ -301,11 +283,9 @@ function DebtModal({ open, onClose, defaultType, editData }: DebtModalProps) {
               placeholder={
                 t === "fd"
                   ? "SBI Fixed Deposit"
-                  : t === "sgb"
-                    ? "SGB Series X 2021-22"
-                    : t === "epf"
-                      ? "Employee Provident Fund"
-                      : "Investment Name"
+                  : t === "epf"
+                    ? "Employee Provident Fund"
+                    : "Investment Name"
               }
               className="bg-background border-border"
               value={form.name}
@@ -316,11 +296,9 @@ function DebtModal({ open, onClose, defaultType, editData }: DebtModalProps) {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="d-principal">
-                {t === "sgb"
-                  ? "Issue Price Total (₹)"
-                  : t === "epf" || t === "ppf"
-                    ? "Opening Balance (₹)"
-                    : "Principal (₹)"}
+                {t === "epf" || t === "ppf"
+                  ? "Opening Balance (₹)"
+                  : "Principal (₹)"}
               </Label>
               <Input
                 id="d-principal"
@@ -430,35 +408,6 @@ function DebtModal({ open, onClose, defaultType, editData }: DebtModalProps) {
                   className="bg-background border-border"
                   value={form.bankName}
                   onChange={(e) => setField("bankName", e.target.value)}
-                />
-              </div>
-            </div>
-          )}
-
-          {t === "sgb" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="d-units">Units (grams)</Label>
-                <Input
-                  id="d-units"
-                  type="number"
-                  step="1"
-                  min="1"
-                  className="bg-background border-border"
-                  value={form.units}
-                  onChange={(e) => setField("units", e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="d-issue">Issue Price per unit (₹)</Label>
-                <Input
-                  id="d-issue"
-                  type="number"
-                  step="10"
-                  min="0"
-                  className="bg-background border-border"
-                  value={form.issuePrice}
-                  onChange={(e) => setField("issuePrice", e.target.value)}
                 />
               </div>
             </div>
