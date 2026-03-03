@@ -1,49 +1,4 @@
 /**
- * Fetch a URL through a chain of CORS proxies, returning the raw response text.
- * Tries each proxy in order and returns the first successful result.
- */
-async function fetchViaProxy(targetUrl: string): Promise<string | null> {
-  // Proxy 1: allorigins (wraps response in JSON { contents: "..." })
-  try {
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-    if (res.ok) {
-      const data = await res.json();
-      const contents = (data?.contents ?? "").trim();
-      if (contents) return contents;
-    }
-  } catch {
-    // fall through to next proxy
-  }
-
-  // Proxy 2: corsproxy.io (transparent proxy — returns raw response)
-  try {
-    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-    if (res.ok) {
-      const text = (await res.text()).trim();
-      if (text) return text;
-    }
-  } catch {
-    // fall through to next proxy
-  }
-
-  // Proxy 3: thingproxy (transparent proxy)
-  try {
-    const proxyUrl = `https://thingproxy.freeboard.io/fetch/${targetUrl}`;
-    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-    if (res.ok) {
-      const text = (await res.text()).trim();
-      if (text) return text;
-    }
-  } catch {
-    // all proxies failed
-  }
-
-  return null;
-}
-
-/**
  * Fetch latest NAV for a mutual fund scheme from mfapi.in
  */
 export async function fetchMFNAV(schemeCode: string): Promise<number | null> {
@@ -97,31 +52,17 @@ export async function searchMutualFunds(
 }
 
 /**
- * Fetch latest NAV for an NPS scheme from npsnav.in/api
+ * Fetch latest NAV for an NPS scheme via the backend canister (server-side HTTP outcall).
  * API: GET https://npsnav.in/api/{pfmId}
- * Response: plain number string e.g. "55.074"
- * Fetched via CORS proxies to avoid CORS restrictions.
+ * The canister returns a plain number string e.g. "55.074"
  */
 export async function fetchNPSNav(pfmId: string): Promise<number | null> {
   try {
-    const targetUrl = `https://npsnav.in/api/${encodeURIComponent(pfmId)}`;
-    const raw = await fetchViaProxy(targetUrl);
+    const { createActorWithConfig } = await import("@/config");
+    const actor = await createActorWithConfig();
+    const raw = await actor.fetchNPSNav(pfmId);
     if (!raw) return null;
-    // The API returns a plain number string like "55.074"
-    // but may also return JSON – handle both cases
-    let navStr: string = raw;
-    if (raw.startsWith("{") || raw.startsWith("[")) {
-      try {
-        const json = JSON.parse(raw);
-        const item = Array.isArray(json) ? json[0] : json;
-        navStr = String(
-          item?.nav ?? item?.NAV ?? item?.currentNav ?? item?.navValue ?? "",
-        );
-      } catch {
-        navStr = raw;
-      }
-    }
-    const nav = Number.parseFloat(navStr);
+    const nav = Number.parseFloat(raw.trim());
     return Number.isNaN(nav) ? null : nav;
   } catch {
     return null;
@@ -168,38 +109,28 @@ export async function fetchSGBPrice(symbol: string): Promise<number | null> {
 }
 
 /**
- * Fetch current stock/ETF price via CORS proxies → Yahoo Finance.
- * Tries multiple Yahoo Finance endpoints and multiple proxies for resilience.
+ * Fetch current stock/ETF price via the backend canister (server-side HTTP outcall).
+ * The canister calls Yahoo Finance and returns the raw JSON string.
  */
 export async function fetchStockPrice(symbol: string): Promise<number | null> {
-  // Try v7 endpoint first, then v8 as fallback
-  const yahooUrls = [
-    `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`,
-    `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`,
-    `https://query1.finance.yahoo.com/v8/finance/quote?symbols=${encodeURIComponent(symbol)}`,
-  ];
-
-  for (const yahooUrl of yahooUrls) {
+  try {
+    const { createActorWithConfig } = await import("@/config");
+    const actor = await createActorWithConfig();
+    const raw = await actor.fetchStockPrice(symbol);
+    if (!raw) return null;
+    let parsed: unknown;
     try {
-      const raw = await fetchViaProxy(yahooUrl);
-      if (!raw) continue;
-      // raw may itself be a JSON string
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        continue;
-      }
-      const price = (
-        parsed as {
-          quoteResponse?: { result?: { regularMarketPrice?: number }[] };
-        }
-      )?.quoteResponse?.result?.[0]?.regularMarketPrice;
-      if (typeof price === "number") return price;
+      parsed = JSON.parse(raw);
     } catch {
-      // try next URL
+      return null;
     }
+    const price = (
+      parsed as {
+        quoteResponse?: { result?: { regularMarketPrice?: number }[] };
+      }
+    )?.quoteResponse?.result?.[0]?.regularMarketPrice;
+    return typeof price === "number" ? price : null;
+  } catch {
+    return null;
   }
-
-  return null;
 }
