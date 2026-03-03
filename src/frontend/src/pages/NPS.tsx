@@ -200,9 +200,9 @@ function NpsModal({ open, onClose, editData }: NpsModalProps) {
               <Input
                 id="nps-nav"
                 type="number"
-                step="0.01"
+                step="0.0001"
                 min="0"
-                placeholder="28.45"
+                placeholder="28.4500"
                 className="bg-background border-border"
                 value={form.purchaseNAV}
                 onChange={(e) => setField("purchaseNAV", e.target.value)}

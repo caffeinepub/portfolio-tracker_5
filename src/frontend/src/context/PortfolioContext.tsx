@@ -156,258 +156,6 @@ interface PortfolioContextValue {
   refreshSGBPrices: () => Promise<void>;
 }
 
-// ─── Sample Data ───────────────────────────────────────────────────────────
-
-const now = Date.now();
-
-const SAMPLE_MUTUAL_FUNDS: MutualFundHolding[] = [
-  {
-    id: "mf1",
-    schemeCode: "120503",
-    schemeName: "Axis Bluechip Fund - Direct Plan - Growth",
-    units: 150.234,
-    purchaseNAV: 42.5,
-    purchaseDate: "2022-03-15",
-    currentNAV: 58.75,
-    lastUpdated: now,
-  },
-  {
-    id: "mf2",
-    schemeCode: "118989",
-    schemeName: "Mirae Asset Large Cap Fund - Direct Growth",
-    units: 200.5,
-    purchaseNAV: 65.2,
-    purchaseDate: "2021-11-10",
-    currentNAV: 89.4,
-    lastUpdated: now,
-  },
-  {
-    id: "mf3",
-    schemeCode: "125354",
-    schemeName: "Parag Parikh Flexi Cap Fund - Direct Growth",
-    units: 85.75,
-    purchaseNAV: 38.1,
-    purchaseDate: "2022-07-20",
-    currentNAV: 72.6,
-    lastUpdated: now,
-  },
-  {
-    id: "mf4",
-    schemeCode: "119598",
-    schemeName: "HDFC Mid-Cap Opportunities Fund - Direct Growth",
-    units: 120.0,
-    purchaseNAV: 75.8,
-    purchaseDate: "2021-05-05",
-    currentNAV: 134.25,
-    lastUpdated: now,
-  },
-];
-
-const SAMPLE_STOCKS: StockHolding[] = [
-  {
-    id: "st1",
-    symbol: "RELIANCE.NS",
-    exchange: "NSE",
-    companyName: "Reliance Industries",
-    quantity: 25,
-    buyPrice: 2450.0,
-    buyDate: "2022-01-10",
-    currentPrice: 2875.5,
-    assetType: "stock",
-    lastUpdated: now,
-  },
-  {
-    id: "st2",
-    symbol: "TCS.NS",
-    exchange: "NSE",
-    companyName: "Tata Consultancy Services",
-    quantity: 15,
-    buyPrice: 3200.0,
-    buyDate: "2021-08-20",
-    currentPrice: 3856.75,
-    assetType: "stock",
-    lastUpdated: now,
-  },
-  {
-    id: "st3",
-    symbol: "INFY.NS",
-    exchange: "NSE",
-    companyName: "Infosys Ltd",
-    quantity: 40,
-    buyPrice: 1450.0,
-    buyDate: "2022-04-05",
-    currentPrice: 1678.3,
-    assetType: "stock",
-    lastUpdated: now,
-  },
-  {
-    id: "etf1",
-    symbol: "NIFTYBEES.NS",
-    exchange: "NSE",
-    companyName: "Nippon India ETF Nifty BeES",
-    quantity: 500,
-    buyPrice: 185.0,
-    buyDate: "2022-02-15",
-    currentPrice: 234.8,
-    assetType: "etf",
-    lastUpdated: now,
-  },
-  {
-    id: "etf2",
-    symbol: "GOLDBEES.NS",
-    exchange: "NSE",
-    companyName: "Nippon India ETF Gold BeES",
-    quantity: 200,
-    buyPrice: 42.5,
-    buyDate: "2021-10-01",
-    currentPrice: 58.2,
-    assetType: "etf",
-    lastUpdated: now,
-  },
-];
-
-const SAMPLE_DEBT: DebtHolding[] = [
-  {
-    id: "debt1",
-    debtType: "epf",
-    name: "Employee Provident Fund",
-    principal: 450000,
-    interestRate: 8.25,
-    startDate: "2018-04-01",
-    maturityDate: "2045-04-01",
-    currentValue: 685000,
-    metadata: { yearlyContribution: 120000 },
-    lastUpdated: now,
-  },
-  {
-    id: "debt2",
-    debtType: "ppf",
-    name: "Public Provident Fund",
-    principal: 150000,
-    interestRate: 7.1,
-    startDate: "2019-04-01",
-    maturityDate: "2034-04-01",
-    currentValue: 198000,
-    metadata: { yearlyContribution: 50000 },
-    lastUpdated: now,
-  },
-  {
-    id: "debt3",
-    debtType: "fd",
-    name: "SBI Fixed Deposit",
-    principal: 200000,
-    interestRate: 7.5,
-    startDate: "2023-06-01",
-    maturityDate: "2026-06-01",
-    currentValue: 234500,
-    metadata: { compoundingFrequency: "quarterly", bankName: "SBI" },
-    lastUpdated: now,
-  },
-];
-
-const SAMPLE_SGB: SgbHolding[] = [
-  {
-    id: "sgb1",
-    symbol: "SGBMAR29",
-    name: "SGB 2021-22 Series X",
-    units: 10,
-    issuePricePerGram: 4791,
-    purchaseDate: "2021-11-12",
-    maturityDate: "2029-11-12",
-    currentPricePerGram: 7200,
-    lastUpdated: now,
-  },
-  {
-    id: "sgb2",
-    symbol: "SGBAUG28",
-    name: "SGB 2020-21 Series VI",
-    units: 5,
-    issuePricePerGram: 5117,
-    purchaseDate: "2020-08-24",
-    maturityDate: "2028-08-24",
-    currentPricePerGram: 7200,
-    lastUpdated: now,
-  },
-];
-
-const SAMPLE_NPS: NpsHolding[] = [
-  {
-    id: "nps1",
-    pfmId: "SM008001",
-    schemeName: "SBI Pension Fund - Scheme E - Tier I",
-    tier: "I",
-    units: 1250.5,
-    purchaseNAV: 28.45,
-    purchaseDate: "2020-04-01",
-    currentNAV: 44.32,
-    lastUpdated: now,
-  },
-  {
-    id: "nps2",
-    pfmId: "SM008002",
-    schemeName: "SBI Pension Fund - Scheme G - Tier I",
-    tier: "I",
-    units: 800.0,
-    purchaseNAV: 22.1,
-    purchaseDate: "2021-01-15",
-    currentNAV: 30.85,
-    lastUpdated: now,
-  },
-];
-
-function buildSampleTransactions(): Transaction[] {
-  const txs: Transaction[] = [];
-  for (const mf of SAMPLE_MUTUAL_FUNDS) {
-    txs.push({
-      id: `tx_${mf.id}`,
-      assetType: "mutualfund",
-      assetName: mf.schemeName,
-      transactionType: "buy",
-      quantity: mf.units,
-      price: mf.purchaseNAV,
-      date: mf.purchaseDate,
-      notes: "Initial purchase",
-    });
-  }
-  for (const s of SAMPLE_STOCKS) {
-    txs.push({
-      id: `tx_${s.id}`,
-      assetType: s.assetType,
-      assetName: s.companyName,
-      transactionType: "buy",
-      quantity: s.quantity,
-      price: s.buyPrice,
-      date: s.buyDate,
-      notes: "Initial purchase",
-    });
-  }
-  for (const d of SAMPLE_DEBT) {
-    txs.push({
-      id: `tx_${d.id}`,
-      assetType: "debt",
-      assetName: d.name,
-      transactionType: "buy",
-      quantity: 1,
-      price: d.principal,
-      date: d.startDate,
-      notes: `${d.debtType.toUpperCase()} investment`,
-    });
-  }
-  for (const s of SAMPLE_SGB) {
-    txs.push({
-      id: `tx_${s.id}`,
-      assetType: "debt",
-      assetName: s.name,
-      transactionType: "buy",
-      quantity: s.units,
-      price: s.issuePricePerGram * s.units,
-      date: s.purchaseDate,
-      notes: "SGB investment",
-    });
-  }
-  return txs;
-}
-
 // ─── Storage Keys ──────────────────────────────────────────────────────────
 
 const KEY_MF = "portfolio_mf";
@@ -416,6 +164,7 @@ const KEY_DEBT = "portfolio_debt";
 const KEY_NPS = "portfolio_nps";
 const KEY_SGB = "portfolio_sgb";
 const KEY_TXS = "portfolio_txs";
+const KEY_INITIALIZED = "portfolio_initialized_v2";
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -424,6 +173,24 @@ function load<T>(key: string, fallback: T): T {
     return JSON.parse(raw) as T;
   } catch {
     return fallback;
+  }
+}
+
+// Clear sample data on first load by checking an initialization flag
+function clearSampleDataIfNeeded() {
+  try {
+    if (!localStorage.getItem(KEY_INITIALIZED)) {
+      // First time loading with v2 -- clear all portfolio keys so sample data is gone
+      localStorage.removeItem(KEY_MF);
+      localStorage.removeItem(KEY_STOCKS);
+      localStorage.removeItem(KEY_DEBT);
+      localStorage.removeItem(KEY_NPS);
+      localStorage.removeItem(KEY_SGB);
+      localStorage.removeItem(KEY_TXS);
+      localStorage.setItem(KEY_INITIALIZED, "true");
+    }
+  } catch {
+    // ignore
   }
 }
 
@@ -516,35 +283,32 @@ function uid(): string {
 
 export function PortfolioProvider({ children }: { children: ReactNode }) {
   // ── State ──────────────────────────────────────────────────────────────
-  const [mutualFunds, setMutualFunds] = useState<MutualFundHolding[]>(() => {
-    const stored = load<MutualFundHolding[]>(KEY_MF, []);
-    return stored.length > 0 ? stored : SAMPLE_MUTUAL_FUNDS;
-  });
-  const [stocks, setStocks] = useState<StockHolding[]>(() => {
-    const stored = load<StockHolding[]>(KEY_STOCKS, []);
-    return stored.length > 0 ? stored : SAMPLE_STOCKS;
-  });
+  // Clear sample data on very first load
+  clearSampleDataIfNeeded();
+
+  const [mutualFunds, setMutualFunds] = useState<MutualFundHolding[]>(() =>
+    load<MutualFundHolding[]>(KEY_MF, []),
+  );
+  const [stocks, setStocks] = useState<StockHolding[]>(() =>
+    load<StockHolding[]>(KEY_STOCKS, []),
+  );
   const [debtHoldings, setDebt] = useState<DebtHolding[]>(() => {
     const stored = load<DebtHolding[]>(KEY_DEBT, []);
     // Filter out any legacy "nps" or "sgb" type entries that may be in local storage
-    const filtered = stored.filter(
+    return stored.filter(
       (h) =>
         (h.debtType as string) !== "nps" && (h.debtType as string) !== "sgb",
     );
-    return filtered.length > 0 ? filtered : SAMPLE_DEBT;
   });
-  const [npsHoldings, setNps] = useState<NpsHolding[]>(() => {
-    const stored = load<NpsHolding[]>(KEY_NPS, []);
-    return stored.length > 0 ? stored : SAMPLE_NPS;
-  });
-  const [sgbHoldings, setSgb] = useState<SgbHolding[]>(() => {
-    const stored = load<SgbHolding[]>(KEY_SGB, []);
-    return stored.length > 0 ? stored : SAMPLE_SGB;
-  });
-  const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    const stored = load<Transaction[]>(KEY_TXS, []);
-    return stored.length > 0 ? stored : buildSampleTransactions();
-  });
+  const [npsHoldings, setNps] = useState<NpsHolding[]>(() =>
+    load<NpsHolding[]>(KEY_NPS, []),
+  );
+  const [sgbHoldings, setSgb] = useState<SgbHolding[]>(() =>
+    load<SgbHolding[]>(KEY_SGB, []),
+  );
+  const [transactions, setTransactions] = useState<Transaction[]>(() =>
+    load<Transaction[]>(KEY_TXS, []),
+  );
 
   const [isRefreshingMF, setRefreshingMF] = useState(false);
   const [isRefreshingStocks, setRefreshingStocks] = useState(false);

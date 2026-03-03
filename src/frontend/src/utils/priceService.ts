@@ -54,23 +54,34 @@ export async function searchMutualFunds(
 /**
  * Fetch latest NAV for an NPS scheme from npsnav.in/api
  * API: GET https://npsnav.in/api/{pfmId}
- * Response example: [{ nav: "35.12", ... }] or { nav: "35.12", ... }
+ * Response: plain number string e.g. "55.074"
+ * Fetched via allorigins proxy to avoid CORS restrictions.
  */
 export async function fetchNPSNav(pfmId: string): Promise<number | null> {
   try {
-    const res = await fetch(
-      `https://npsnav.in/api/${encodeURIComponent(pfmId)}`,
-      {
-        signal: AbortSignal.timeout(10000),
-      },
-    );
+    const targetUrl = `https://npsnav.in/api/${encodeURIComponent(pfmId)}`;
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
     if (!res.ok) return null;
-    const json = await res.json();
-    // Handle both array and object responses
-    const item = Array.isArray(json) ? json[0] : json;
-    const navStr = item?.nav ?? item?.NAV ?? item?.currentNav;
-    if (!navStr) return null;
-    const nav = Number.parseFloat(String(navStr));
+    const data = await res.json();
+    // allorigins wraps the response body in data.contents (a string)
+    const raw = (data?.contents ?? "").trim();
+    if (!raw) return null;
+    // The API returns a plain number string like "55.074"
+    // but may also return JSON – handle both cases
+    let navStr: string = raw;
+    if (raw.startsWith("{") || raw.startsWith("[")) {
+      try {
+        const json = JSON.parse(raw);
+        const item = Array.isArray(json) ? json[0] : json;
+        navStr = String(
+          item?.nav ?? item?.NAV ?? item?.currentNav ?? item?.navValue ?? "",
+        );
+      } catch {
+        navStr = raw;
+      }
+    }
+    const nav = Number.parseFloat(navStr);
     return Number.isNaN(nav) ? null : nav;
   } catch {
     return null;
