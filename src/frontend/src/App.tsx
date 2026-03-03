@@ -20,7 +20,7 @@ export type Theme = "light" | "dark";
 
 // ─── Loading Screen ────────────────────────────────────────────────────────
 
-function LoadingScreen() {
+function LoadingScreen(_props?: { theme?: Theme }) {
   return (
     <div
       className="min-h-screen flex items-center justify-center bg-background"
@@ -239,41 +239,20 @@ export default function App() {
   });
 
   const { identity, login, isLoggingIn } = useInternetIdentity();
-  const { actor } = useActor();
+  const { actor, isFetching: isActorFetching } = useActor();
 
   const [userProfile, setUserProfile] = useState<{ name: string } | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [profileTimedOut, setProfileTimedOut] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
-  // appReady: show login screen after a short delay on mount.
-  // We do NOT wait on loginStatus or isInitializing -- those cycle in a loop.
-  // We just wait 1.5s for the auth client to restore a stored session,
-  // then show whatever state we're in.
+  // appReady: true once we are confident auth has settled (identity present or timeout)
   const [appReady, setAppReady] = useState(false);
-  const appReadyRef = useRef(false);
 
-  // If identity appears before the timer fires, become ready immediately.
-  useEffect(() => {
-    if (identity && !appReadyRef.current) {
-      appReadyRef.current = true;
-      setAppReady(true);
-    }
-  }, [identity]);
-
-  // 1.5s fallback so unauthenticated users see the login screen quickly.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (!appReadyRef.current) {
-        appReadyRef.current = true;
-        setAppReady(true);
-      }
-    }, 1500);
-    return () => clearTimeout(t);
-  }, []);
+  const profileRef = useRef(false);
 
   const isAuthenticated = !!identity;
-  const prevIdentityRef = useRef<typeof identity>(undefined);
-  const profileFetchedRef = useRef(false);
 
   // Apply theme to DOM
   useEffect(() => {
@@ -296,48 +275,61 @@ export default function App() {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }
 
-  // Reset profile state when identity changes (login / logout)
+  // Once identity appears, mark app as ready immediately.
+  // Also set a hard 3-second fallback so new/unauthenticated users always see the login screen.
   useEffect(() => {
-    if (prevIdentityRef.current !== identity) {
-      if (!identity) {
-        setUserProfile(null);
-        setProfileLoaded(false);
-        profileFetchedRef.current = false;
-      }
-      prevIdentityRef.current = identity;
+    if (identity) {
+      setAppReady(true);
+      return;
     }
+    const timer = setTimeout(() => setAppReady(true), 3000);
+    return () => clearTimeout(timer);
   }, [identity]);
 
-  // Load user profile once actor + identity are both available (once per session)
+  // Load user profile when actor becomes available and user is authenticated
   useEffect(() => {
-    if (!actor || !identity || profileFetchedRef.current) return;
-    profileFetchedRef.current = true;
+    if (!actor || !identity || isActorFetching || profileRef.current) return;
+    profileRef.current = true;
 
-    let cancelled = false;
+    setIsLoadingProfile(true);
+
+    let timedOut = false;
     const timeoutId = setTimeout(() => {
-      if (!cancelled) setProfileLoaded(true);
-    }, 8000);
+      timedOut = true;
+      setProfileTimedOut(true);
+      setProfileLoaded(true);
+      setIsLoadingProfile(false);
+    }, 15000);
 
     actor
       .getCallerUserProfile()
       .then((profile) => {
-        if (cancelled) return;
+        if (timedOut) return;
         clearTimeout(timeoutId);
         setUserProfile(profile);
         setProfileLoaded(true);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (timedOut) return;
         clearTimeout(timeoutId);
         setUserProfile(null);
         setProfileLoaded(true);
+      })
+      .finally(() => {
+        if (!timedOut) setIsLoadingProfile(false);
       });
+  }, [actor, identity, isActorFetching]);
 
-    return () => {
-      cancelled = true;
-      clearTimeout(timeoutId);
-    };
-  }, [actor, identity]);
+  // Reset profile state on logout
+  useEffect(() => {
+    if (!identity) {
+      setUserProfile(null);
+      setProfileLoaded(false);
+      setProfileTimedOut(false);
+      setAppReady(false);
+      profileRef.current = false;
+    }
+  }, [identity]);
 
   async function handleSaveProfile(name: string) {
     if (!actor) return;
@@ -352,8 +344,13 @@ export default function App() {
     }
   }
 
-  // Phase 1: waiting for auth client to initialise (max 1.5s)
+  // Show loading until app is ready
   if (!appReady) {
+    return <LoadingScreen />;
+  }
+
+  // Show loading while profile is loading (after auth, before profile result)
+  if (isAuthenticated && isLoadingProfile && !profileLoaded) {
     return <LoadingScreen />;
   }
 
@@ -383,13 +380,8 @@ export default function App() {
     );
   }
 
-  // Phase 2: authenticated, waiting for actor + profile (max 8s via timeout above)
-  if (isAuthenticated && (!actor || !profileLoaded)) {
-    return <LoadingScreen />;
-  }
-
-  // Show profile setup if authenticated but no profile yet
-  if (isAuthenticated && profileLoaded && !userProfile) {
+  // Show profile setup if authenticated but no profile yet (skip if timed out)
+  if (isAuthenticated && profileLoaded && !profileTimedOut && !userProfile) {
     return (
       <>
         <ProfileSetupModal
@@ -401,8 +393,13 @@ export default function App() {
     );
   }
 
+  // Actor must be ready at this point
+  if (!actor) {
+    return <LoadingScreen />;
+  }
+
   return (
-    <PortfolioProvider actor={actor!}>
+    <PortfolioProvider actor={actor}>
       <AppContent
         theme={theme}
         onToggleTheme={toggleTheme}

@@ -303,7 +303,28 @@ function computeTotals(
   const debtValue = debt.reduce((s, h) => s + h.currentValue, 0);
   const debtInvested = debt.reduce((s, h) => s + h.principal, 0);
 
-  const npsValue = nps.reduce((s, h) => s + h.units * h.currentNAV, 0);
+  // Group NPS by PFM+Tier so we use one currentNAV per scheme (the latest)
+  // rather than each transaction's stale stored NAV.
+  const npsGroupMap = new Map<
+    string,
+    { totalUnits: number; currentNAV: number }
+  >();
+  for (const h of nps) {
+    const key = `${h.pfmId}__${h.tier}`;
+    const existing = npsGroupMap.get(key);
+    if (existing) {
+      existing.totalUnits += h.units;
+      // keep the highest currentNAV (most recently refreshed)
+      if (h.currentNAV > existing.currentNAV)
+        existing.currentNAV = h.currentNAV;
+    } else {
+      npsGroupMap.set(key, { totalUnits: h.units, currentNAV: h.currentNAV });
+    }
+  }
+  const npsValue = Array.from(npsGroupMap.values()).reduce(
+    (s, g) => s + g.totalUnits * g.currentNAV,
+    0,
+  );
   const npsInvested = nps.reduce((s, h) => s + h.units * h.purchaseNAV, 0);
 
   const sgbValue = sgb.reduce((s, h) => s + h.units * h.currentPricePerGram, 0);
@@ -866,58 +887,27 @@ export function PortfolioProvider({ children, actor }: PortfolioProviderProps) {
   const refreshNPSPrices = useCallback(async () => {
     setRefreshingNPS(true);
     try {
-      const current = npsRef.current;
-      if (current.length === 0) return;
-
-      // Deduplicate: fetch NAV once per unique pfmId to avoid parallel
-      // duplicate HTTP outcalls (ICP consensus issues) and rate limiting.
-      const uniquePfmIds = [...new Set(current.map((h) => h.pfmId))];
-      const navMap = new Map<string, number | null>();
-
-      // Fetch sequentially to avoid hammering npsnav.in
+      // Deduplicate: fetch NAV once per unique pfmId (sequential to avoid ICP consensus conflicts)
+      const uniquePfmIds = [...new Set(npsRef.current.map((h) => h.pfmId))];
+      const navCache = new Map<string, number | null>();
       for (const pfmId of uniquePfmIds) {
         const nav = await fetchNPSNav(pfmId, actor);
-        navMap.set(pfmId, nav);
+        navCache.set(pfmId, nav);
       }
-
       const now = Date.now();
-      const updated = current.map((h) => {
-        const nav = navMap.get(h.pfmId);
+      const updated = npsRef.current.map((h) => {
+        const nav = navCache.get(h.pfmId);
         return nav !== null && nav !== undefined
           ? { ...h, currentNAV: nav, lastUpdated: now }
           : h;
       });
-
       setNps(updated);
-
       // Persist updated prices to canister
-      const changedIds = new Set<string>();
-      for (let i = 0; i < updated.length; i++) {
-        if (updated[i].currentNAV !== current[i]?.currentNAV) {
-          changedIds.add(updated[i].id);
-        }
-      }
       await Promise.all(
         updated
-          .filter((u) => changedIds.has(u.id))
+          .filter((u, i) => u.currentNAV !== npsRef.current[i]?.currentNAV)
           .map((u) => actor.updateNps(u.id, toBackendNps(u)).catch(() => {})),
       );
-
-      // User feedback
-      const successCount = [...navMap.values()].filter(
-        (v) => v !== null,
-      ).length;
-      if (successCount === 0) {
-        toast.error(
-          "Could not fetch NPS NAVs. Check your PFM codes or try again.",
-        );
-      } else if (successCount < uniquePfmIds.length) {
-        toast.warning(
-          `Updated ${successCount}/${uniquePfmIds.length} NPS NAVs. Some PFM codes may be invalid.`,
-        );
-      } else {
-        toast.success("NPS NAVs updated successfully.");
-      }
     } finally {
       setRefreshingNPS(false);
       setLastRefreshed(Date.now());

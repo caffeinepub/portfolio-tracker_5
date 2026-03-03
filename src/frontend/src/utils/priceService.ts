@@ -64,37 +64,8 @@ export async function fetchNPSNav(
   try {
     const raw = await actor.fetchNPSNav(pfmId);
     if (!raw) return null;
-
-    const trimmed = raw.trim();
-
-    // Try direct parse first (plain number like "55.074")
-    const direct = Number.parseFloat(trimmed);
-    if (!Number.isNaN(direct) && direct > 0) return direct;
-
-    // Try JSON parse in case the endpoint returns { nav: "55.074" } or { data: { nav: ... } }
-    try {
-      const json = JSON.parse(trimmed) as unknown;
-      if (typeof json === "number" && json > 0) return json;
-      if (json && typeof json === "object") {
-        const obj = json as Record<string, unknown>;
-        const candidates = [
-          obj.nav,
-          obj.NAV,
-          obj.price,
-          (obj.data as Record<string, unknown> | undefined)?.nav,
-        ];
-        for (const c of candidates) {
-          if (c !== undefined && c !== null) {
-            const v = Number.parseFloat(String(c));
-            if (!Number.isNaN(v) && v > 0) return v;
-          }
-        }
-      }
-    } catch {
-      // not JSON – ignore
-    }
-
-    return null;
+    const nav = Number.parseFloat(raw.trim());
+    return Number.isNaN(nav) ? null : nav;
   } catch {
     return null;
   }
