@@ -109,27 +109,57 @@ export async function fetchSGBPrice(symbol: string): Promise<number | null> {
 }
 
 /**
- * Fetch current stock/ETF price via the backend canister (server-side HTTP outcall).
- * The canister calls Yahoo Finance and returns the raw JSON string.
+ * Convert a symbol to the @EXCHANGE:TICKER format used by stockanalysis.com.
+ *
+ * Accepted input formats:
+ *   NSE:ICICIBANK   → @NSE:ICICIBANK  (preferred format)
+ *   BSE:RELIANCE    → @BSE:RELIANCE
+ *   @NSE:ICICIBANK  → @NSE:ICICIBANK  (already has @)
+ *   RELIANCE.NS     → @NSE:RELIANCE   (legacy Yahoo-style .NS)
+ *   RELIANCE.BO     → @BSE:RELIANCE   (legacy Yahoo-style .BO)
+ *   AAPL            → AAPL            (US plain symbol – no @ prefix)
+ */
+function toStockAnalysisSymbol(symbol: string): string {
+  const trimmed = symbol.trim();
+
+  // Already has @ prefix
+  if (trimmed.startsWith("@")) return trimmed.toUpperCase();
+
+  const upper = trimmed.toUpperCase();
+
+  // EXCHANGE:TICKER format → @EXCHANGE:TICKER
+  if (upper.includes(":")) return `@${upper}`;
+
+  // Legacy Yahoo .NS / .BO suffixes
+  if (upper.endsWith(".NS")) return `@NSE:${upper.slice(0, -3)}`;
+  if (upper.endsWith(".BO")) return `@BSE:${upper.slice(0, -3)}`;
+
+  // US or plain symbol – pass through as-is
+  return upper;
+}
+
+/**
+ * Fetch current stock/ETF price directly from stockanalysis.com (browser fetch, no proxy).
+ * API: GET https://stockanalysis.com/api/quotes/prices?s=@NSE:SYMBOL
+ * Response: { data: [{ price: number, ... }] }
  */
 export async function fetchStockPrice(symbol: string): Promise<number | null> {
   try {
-    const { createActorWithConfig } = await import("@/config");
-    const actor = await createActorWithConfig();
-    const raw = await actor.fetchStockPrice(symbol);
-    if (!raw) return null;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-    const price = (
-      parsed as {
-        quoteResponse?: { result?: { regularMarketPrice?: number }[] };
-      }
-    )?.quoteResponse?.result?.[0]?.regularMarketPrice;
-    return typeof price === "number" ? price : null;
+    const saSymbol = toStockAnalysisSymbol(symbol);
+    const url = `https://stockanalysis.com/api/quotes/prices?s=${encodeURIComponent(saSymbol)}`;
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    // Response: { data: [{ price: number, ... }] }
+    const price = (json as { data?: Array<{ price?: number }> })?.data?.[0]
+      ?.price;
+    if (typeof price === "number" && price > 0) return price;
+    return null;
   } catch {
     return null;
   }

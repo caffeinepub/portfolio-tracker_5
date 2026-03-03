@@ -120,6 +120,51 @@ export function calcCAGR(
 }
 
 /**
+ * Calculate XIRR (Extended Internal Rate of Return) using Newton-Raphson.
+ * cashflows: array of { amount (negative = outflow/investment), date: YYYY-MM-DD }
+ * Returns annualised rate as a percentage (e.g. 12.5 means 12.5%).
+ */
+export function calcXIRR(
+  cashflows: { amount: number; date: string }[],
+): number {
+  if (cashflows.length < 2) return 0;
+  const dates = cashflows.map((c) => new Date(c.date).getTime());
+  const t0 = dates[0];
+  const years = dates.map((d) => (d - t0) / (365.25 * 24 * 60 * 60 * 1000));
+
+  function npv(rate: number): number {
+    return cashflows.reduce((sum, c, i) => {
+      return sum + c.amount / (1 + rate) ** years[i];
+    }, 0);
+  }
+
+  function dnpv(rate: number): number {
+    return cashflows.reduce((sum, c, i) => {
+      if (years[i] === 0) return sum;
+      return sum - (years[i] * c.amount) / (1 + rate) ** (years[i] + 1);
+    }, 0);
+  }
+
+  let rate = 0.1;
+  for (let i = 0; i < 100; i++) {
+    const n = npv(rate);
+    const d = dnpv(rate);
+    if (Math.abs(d) < 1e-12) break;
+    const newRate = rate - n / d;
+    if (Math.abs(newRate - rate) < 1e-8) {
+      rate = newRate;
+      break;
+    }
+    rate = newRate;
+    if (rate <= -1) {
+      rate = -0.999;
+      break;
+    }
+  }
+  return rate * 100;
+}
+
+/**
  * Compounding frequency label to times-per-year number.
  */
 export function freqToTimesPerYear(freq: string): number {

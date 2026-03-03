@@ -183,14 +183,14 @@ function StockModal({ open, onClose, assetType, editData }: StockModalProps) {
               <Input
                 id="s-symbol"
                 placeholder={
-                  assetType === "etf" ? "NIFTYBEES.NS" : "RELIANCE.NS"
+                  assetType === "etf" ? "NSE:NIFTYBEES" : "NSE:ICICIBANK"
                 }
                 className="bg-background border-border uppercase"
                 value={form.symbol}
                 onChange={(e) => handleField("symbol", e.target.value)}
               />
               <p className="text-[10px] text-muted-foreground">
-                NSE: .NS, BSE: .BO, US: plain
+                Format: NSE:ICICIBANK or BSE:RELIANCE
               </p>
             </div>
             <div className="space-y-1.5">
