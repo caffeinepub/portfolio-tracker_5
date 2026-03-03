@@ -866,21 +866,58 @@ export function PortfolioProvider({ children, actor }: PortfolioProviderProps) {
   const refreshNPSPrices = useCallback(async () => {
     setRefreshingNPS(true);
     try {
-      const updated = await Promise.all(
-        npsRef.current.map(async (h) => {
-          const nav = await fetchNPSNav(h.pfmId, actor);
-          return nav !== null
-            ? { ...h, currentNAV: nav, lastUpdated: Date.now() }
-            : h;
-        }),
-      );
+      const current = npsRef.current;
+      if (current.length === 0) return;
+
+      // Deduplicate: fetch NAV once per unique pfmId to avoid parallel
+      // duplicate HTTP outcalls (ICP consensus issues) and rate limiting.
+      const uniquePfmIds = [...new Set(current.map((h) => h.pfmId))];
+      const navMap = new Map<string, number | null>();
+
+      // Fetch sequentially to avoid hammering npsnav.in
+      for (const pfmId of uniquePfmIds) {
+        const nav = await fetchNPSNav(pfmId, actor);
+        navMap.set(pfmId, nav);
+      }
+
+      const now = Date.now();
+      const updated = current.map((h) => {
+        const nav = navMap.get(h.pfmId);
+        return nav !== null && nav !== undefined
+          ? { ...h, currentNAV: nav, lastUpdated: now }
+          : h;
+      });
+
       setNps(updated);
+
       // Persist updated prices to canister
+      const changedIds = new Set<string>();
+      for (let i = 0; i < updated.length; i++) {
+        if (updated[i].currentNAV !== current[i]?.currentNAV) {
+          changedIds.add(updated[i].id);
+        }
+      }
       await Promise.all(
         updated
-          .filter((u, i) => u.currentNAV !== npsRef.current[i]?.currentNAV)
+          .filter((u) => changedIds.has(u.id))
           .map((u) => actor.updateNps(u.id, toBackendNps(u)).catch(() => {})),
       );
+
+      // User feedback
+      const successCount = [...navMap.values()].filter(
+        (v) => v !== null,
+      ).length;
+      if (successCount === 0) {
+        toast.error(
+          "Could not fetch NPS NAVs. Check your PFM codes or try again.",
+        );
+      } else if (successCount < uniquePfmIds.length) {
+        toast.warning(
+          `Updated ${successCount}/${uniquePfmIds.length} NPS NAVs. Some PFM codes may be invalid.`,
+        );
+      } else {
+        toast.success("NPS NAVs updated successfully.");
+      }
     } finally {
       setRefreshingNPS(false);
       setLastRefreshed(Date.now());
