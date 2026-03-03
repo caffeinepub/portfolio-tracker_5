@@ -245,9 +245,13 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<{ name: string } | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [profileTimedOut, setProfileTimedOut] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const profileRef = useRef(false);
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+
+  const isAuthenticated = !!identity;
 
   // Apply theme to DOM
   useEffect(() => {
@@ -276,18 +280,31 @@ export default function App() {
     profileRef.current = true;
 
     setIsLoadingProfile(true);
+
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      setProfileTimedOut(true);
+      setProfileLoaded(true);
+      setIsLoadingProfile(false);
+    }, 15000);
+
     actor
       .getCallerUserProfile()
       .then((profile) => {
+        if (timedOut) return;
+        clearTimeout(timeoutId);
         setUserProfile(profile);
         setProfileLoaded(true);
       })
       .catch(() => {
+        if (timedOut) return;
+        clearTimeout(timeoutId);
         setUserProfile(null);
         setProfileLoaded(true);
       })
       .finally(() => {
-        setIsLoadingProfile(false);
+        if (!timedOut) setIsLoadingProfile(false);
       });
   }, [actor, identity, isActorFetching]);
 
@@ -296,9 +313,24 @@ export default function App() {
     if (!identity) {
       setUserProfile(null);
       setProfileLoaded(false);
+      setProfileTimedOut(false);
+      setLoadingTimedOut(false);
       profileRef.current = false;
     }
   }, [identity]);
+
+  // Loading timeout escape hatch — 20 seconds
+  useEffect(() => {
+    if (!isAuthenticated || profileLoaded) return;
+    const timer = setTimeout(() => {
+      setLoadingTimedOut(true);
+      // Force through even if actor/profile never completed
+      setProfileTimedOut(true);
+      setProfileLoaded(true);
+      setIsLoadingProfile(false);
+    }, 20000);
+    return () => clearTimeout(timer);
+  }, [isAuthenticated, profileLoaded]);
 
   async function handleSaveProfile(name: string) {
     if (!actor) return;
@@ -313,14 +345,28 @@ export default function App() {
     }
   }
 
-  const isAuthenticated = !!identity;
   const isLoading =
-    isInitializing ||
-    (isAuthenticated && (isActorFetching || isLoadingProfile));
+    !loadingTimedOut &&
+    (isInitializing ||
+      (isAuthenticated && (isActorFetching || isLoadingProfile)));
 
   // Show loading during initialization
   if (isLoading) {
     return <LoadingScreen />;
+  }
+
+  // Loading timed out and actor still not ready — show escape hatch
+  if (loadingTimedOut && !actor) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <p className="text-sm text-muted-foreground">
+            Taking longer than expected...
+          </p>
+          <Button onClick={() => window.location.reload()}>Retry</Button>
+        </div>
+      </div>
+    );
   }
 
   // Show login screen if not authenticated
@@ -352,8 +398,8 @@ export default function App() {
     );
   }
 
-  // Show profile setup if authenticated but no profile yet
-  if (isAuthenticated && profileLoaded && !userProfile) {
+  // Show profile setup if authenticated but no profile yet (skip if timed out)
+  if (isAuthenticated && profileLoaded && !profileTimedOut && !userProfile) {
     return (
       <>
         <ProfileSetupModal

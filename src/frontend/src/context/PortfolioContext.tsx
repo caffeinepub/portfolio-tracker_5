@@ -868,7 +868,7 @@ export function PortfolioProvider({ children, actor }: PortfolioProviderProps) {
     try {
       const updated = await Promise.all(
         npsRef.current.map(async (h) => {
-          const nav = await fetchNPSNav(h.pfmId);
+          const nav = await fetchNPSNav(h.pfmId, actor);
           return nav !== null
             ? { ...h, currentNAV: nav, lastUpdated: Date.now() }
             : h;

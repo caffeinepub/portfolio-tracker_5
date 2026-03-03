@@ -55,11 +55,13 @@ export async function searchMutualFunds(
  * Fetch latest NAV for an NPS scheme via the backend canister (server-side HTTP outcall).
  * API: GET https://npsnav.in/api/{pfmId}
  * The canister returns a plain number string e.g. "55.074"
+ * Requires an authenticated actor – pass the one from PortfolioContext.
  */
-export async function fetchNPSNav(pfmId: string): Promise<number | null> {
+export async function fetchNPSNav(
+  pfmId: string,
+  actor: { fetchNPSNav: (pfmId: string) => Promise<string> },
+): Promise<number | null> {
   try {
-    const { createActorWithConfig } = await import("@/config");
-    const actor = await createActorWithConfig();
     const raw = await actor.fetchNPSNav(pfmId);
     if (!raw) return null;
     const nav = Number.parseFloat(raw.trim());
