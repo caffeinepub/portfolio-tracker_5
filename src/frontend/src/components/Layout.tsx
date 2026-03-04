@@ -340,7 +340,7 @@ export default function Layout({
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto scrollbar-thin">
-          <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">{children}</div>
+          <div className="p-4 md:p-6 lg:p-8 w-full">{children}</div>
         </main>
       </div>
     </div>

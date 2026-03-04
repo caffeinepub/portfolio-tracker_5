@@ -2,44 +2,44 @@
 
 ## Current State
 
-All portfolio data (Mutual Funds, Stocks/ETFs, Debt, NPS, SGB, Transactions) is stored in **browser localStorage**. Data is device/browser-specific and will be lost when the browser cache is cleared. The backend canister only provides HTTP outcall helpers (fetchMFData, fetchNPSNav, fetchStockPrice, searchMutualFunds). There is no authentication or user-bound persistent storage.
+The app uses ICP backend canister for all data persistence. Users must log in with Internet Identity before accessing the app. All CRUD operations (mutual funds, stocks, debt, NPS, SGB, transactions) call the canister via an authenticated actor. NPS NAV refresh also goes through the canister's HTTP outcall. The `PortfolioProvider` takes an `actor` prop and all mutations call `actor.*` methods.
 
 ## Requested Changes (Diff)
 
 ### Add
-- Internet Identity login (via authorization component) so data is user-bound
-- Backend Motoko data stores for all 6 portfolio entity types (MutualFundHolding, StockHolding, DebtHolding, NpsHolding, SgbHolding, Transaction) keyed by caller principal
-- Full CRUD backend APIs: add, update, delete, getAll for each entity type
-- Login/logout button in the sidebar and a login gate screen before the portfolio is shown
-- Migration helper: on first login, offer to import existing localStorage data into the backend canister
-- Loading state while data is being fetched from the canister on login
+- Session-based storage using `sessionStorage` (data lives only for the browser tab/session, cleared on close)
+- NPS NAV fetch directly from browser (via allorigins CORS proxy) instead of canister outcall
 
 ### Modify
-- PortfolioContext to call backend canister APIs instead of reading/writing localStorage
-- Data initialisation to load from canister after successful login rather than from localStorage
-- CRUD operations to persist to canister instead of localStorage
-- Keep localStorage only for theme preference (not portfolio data)
+- `App.tsx`: Remove Internet Identity login, `useInternetIdentity`, `useActor`, profile setup modal, loading gate. App loads immediately with no auth, wrapping `PortfolioProvider` directly.
+- `PortfolioContext.tsx`: Remove `actor` prop and all canister calls. Replace all CRUD operations with in-memory state + sessionStorage persistence. On mount, load from sessionStorage instead of canister.
+- `priceService.ts`: Update `fetchNPSNav` to call npsnav.in directly via a CORS proxy (no actor parameter).
 
 ### Remove
-- localStorage read/write for all portfolio data (KEY_MF, KEY_STOCKS, KEY_DEBT, KEY_NPS, KEY_SGB, KEY_TXS)
-- clearSampleDataIfNeeded() helper (no longer needed)
+- Login screen component
+- `ProfileSetupModal` component
+- `useInternetIdentity` and `useActor` hook usage in `App.tsx`
+- All `actor.*` calls in `PortfolioContext.tsx`
+- Backend conversion helpers (`toBackendMF`, `fromBackendMF`, etc.) — no longer needed
+- Loading/timeout logic tied to auth initialization
 
 ## Implementation Plan
 
-1. Select `authorization` Caffeine component
-2. Generate Motoko backend with:
-   - Stable storage HashMap keyed by Principal for each entity type
-   - CRUD methods: addMutualFund, updateMutualFund, deleteMutualFund, getMutualFunds
-   - CRUD methods: addStock, updateStock, deleteStock, getStocks
-   - CRUD methods: addDebt, updateDebt, deleteDebt, getDebtHoldings
-   - CRUD methods: addNps, updateNps, deleteNps, getNpsHoldings
-   - CRUD methods: addSgb, updateSgb, deleteSgb, getSgbHoldings
-   - CRUD methods: addTransaction, deleteTransaction, getTransactions
-   - Retain existing HTTP outcall functions (fetchMFData, fetchNPSNav, fetchStockPrice, searchMutualFunds)
-3. Update PortfolioContext to:
-   - Accept authenticated actor
-   - Load all data from canister on login
-   - Call canister on every CRUD mutation
-   - Show loading state during initial fetch
-4. Add login gate in App.tsx: show login screen if not authenticated, show portfolio if authenticated
-5. Add login/logout control in Layout sidebar
+1. Rewrite `PortfolioContext.tsx`:
+   - Remove `actor` prop from `PortfolioProviderProps`
+   - Remove all backend conversion helpers
+   - Replace `loadData` useEffect (canister fetch) with sessionStorage load on mount
+   - Replace all `actor.*` CRUD calls with sessionStorage.setItem after state update
+   - Update `refreshNPSPrices` to call `fetchNPSNav(pfmId)` without actor
+   - Keep all computed totals, refresh logic, price service calls unchanged
+
+2. Rewrite `App.tsx`:
+   - Remove `useInternetIdentity`, `useActor` imports and usage
+   - Remove `LoginScreen`, `ProfileSetupModal` components
+   - Remove all auth state, profile state, loading gate
+   - App renders directly into `PortfolioProvider > AppContent`
+   - Keep theme toggle (localStorage persisted)
+
+3. Update `priceService.ts`:
+   - Change `fetchNPSNav(pfmId, actor)` signature to `fetchNPSNav(pfmId)` 
+   - Implement direct browser fetch via allorigins proxy (same as MF fetch)
