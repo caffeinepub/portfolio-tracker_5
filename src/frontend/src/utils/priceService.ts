@@ -57,30 +57,74 @@ export async function searchMutualFunds(
  * The endpoint returns a plain number string e.g. "55.074"
  */
 export async function fetchNPSNav(pfmId: string): Promise<number | null> {
-  const proxies = [
-    (url: string) =>
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`,
-  ];
-
   const targetUrl = `https://npsnav.in/api/${encodeURIComponent(pfmId)}`;
 
-  for (const buildProxy of proxies) {
-    try {
-      const proxyUrl = buildProxy(targetUrl);
-      const res = await fetch(proxyUrl, {
-        signal: AbortSignal.timeout(12000),
-      });
-      if (!res.ok) continue;
-      const text = (await res.text()).trim();
-      if (!text) continue;
-      const nav = Number.parseFloat(text);
-      if (!Number.isNaN(nav) && nav > 0) return nav;
-    } catch {
-      // Try next proxy
+  // Strategy 1: allorigins /get endpoint (returns JSON with "contents" field)
+  try {
+    const res = await fetch(
+      `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+      { signal: AbortSignal.timeout(12000) },
+    );
+    if (res.ok) {
+      const json = (await res.json()) as { contents?: string };
+      const text = (json?.contents ?? "").trim();
+      if (text) {
+        const nav = Number.parseFloat(text);
+        if (!Number.isNaN(nav) && nav > 0) return nav;
+      }
     }
+  } catch {
+    // fall through
   }
+
+  // Strategy 2: allorigins /raw endpoint
+  try {
+    const res = await fetch(
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+      { signal: AbortSignal.timeout(12000) },
+    );
+    if (res.ok) {
+      const text = (await res.text()).trim();
+      if (text) {
+        const nav = Number.parseFloat(text);
+        if (!Number.isNaN(nav) && nav > 0) return nav;
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  // Strategy 3: corsproxy.io
+  try {
+    const res = await fetch(
+      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+      { signal: AbortSignal.timeout(12000) },
+    );
+    if (res.ok) {
+      const text = (await res.text()).trim();
+      if (text) {
+        const nav = Number.parseFloat(text);
+        if (!Number.isNaN(nav) && nav > 0) return nav;
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  // Strategy 4: direct fetch (works if browser allows CORS or in dev mode)
+  try {
+    const res = await fetch(targetUrl, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const text = (await res.text()).trim();
+      if (text) {
+        const nav = Number.parseFloat(text);
+        if (!Number.isNaN(nav) && nav > 0) return nav;
+      }
+    }
+  } catch {
+    // exhausted all strategies
+  }
+
   return null;
 }
 

@@ -170,6 +170,8 @@ interface PortfolioContextValue {
   refreshSGBPrices: () => Promise<void>;
 
   clearAllData: () => void;
+  exportData: () => void;
+  importData: (jsonString: string) => boolean;
 }
 
 // ─── SessionStorage helpers ────────────────────────────────────────────────
@@ -532,15 +534,30 @@ export function PortfolioProvider({ children }: PortfolioProviderProps) {
   const refreshMFPrices = useCallback(async () => {
     setRefreshingMF(true);
     try {
-      const updated = await Promise.all(
-        mfRef.current.map(async (mf) => {
-          const nav = await fetchMFNAV(mf.schemeCode);
-          return nav !== null
-            ? { ...mf, currentNAV: nav, lastUpdated: Date.now() }
-            : mf;
-        }),
-      );
+      // Fetch NAVs sequentially per unique schemeCode to avoid rate-limit issues
+      const uniqueSchemeCodes = [
+        ...new Set(mfRef.current.map((h) => h.schemeCode)),
+      ];
+      const navMap = new Map<string, number>();
+      for (const schemeCode of uniqueSchemeCodes) {
+        const nav = await fetchMFNAV(schemeCode);
+        if (nav !== null) navMap.set(schemeCode, nav);
+      }
+
+      const updated = mfRef.current.map((mf) => {
+        const nav = navMap.get(mf.schemeCode);
+        return nav !== undefined
+          ? { ...mf, currentNAV: nav, lastUpdated: Date.now() }
+          : mf;
+      });
       setMutualFunds(updated);
+
+      const updatedCount = updated.filter(
+        (u, i) => u.currentNAV !== mfRef.current[i]?.currentNAV,
+      ).length;
+      if (updatedCount > 0) {
+        toast.success(`Updated NAV for ${updatedCount} fund(s).`);
+      }
     } finally {
       setRefreshingMF(false);
       setLastRefreshed(Date.now());
@@ -637,6 +654,87 @@ export function PortfolioProvider({ children }: PortfolioProviderProps) {
     return () => clearInterval(intervalId);
   }, [refreshMFPrices, refreshStockPrices, refreshNPSPrices, refreshSGBPrices]);
 
+  // ── Export all data as JSON download ──────────────────────────────────
+  const exportData = useCallback(() => {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      mutualFunds: mutualFunds,
+      stocks: stocks,
+      debtHoldings: debtHoldings,
+      npsHoldings: npsHoldings,
+      sgbHoldings: sgbHoldings,
+      transactions: transactions,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `portfolio_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Portfolio data exported successfully.");
+  }, [
+    mutualFunds,
+    stocks,
+    debtHoldings,
+    npsHoldings,
+    sgbHoldings,
+    transactions,
+  ]);
+
+  // ── Import data from JSON string ───────────────────────────────────────
+  const importData = useCallback((jsonString: string): boolean => {
+    try {
+      const payload = JSON.parse(jsonString);
+      if (!payload || typeof payload !== "object")
+        throw new Error("Invalid format");
+
+      const mfs: MutualFundHolding[] = Array.isArray(payload.mutualFunds)
+        ? payload.mutualFunds
+        : [];
+      const sts: StockHolding[] = Array.isArray(payload.stocks)
+        ? payload.stocks
+        : [];
+      const dbt: DebtHolding[] = Array.isArray(payload.debtHoldings)
+        ? payload.debtHoldings
+        : [];
+      const nps: NpsHolding[] = Array.isArray(payload.npsHoldings)
+        ? payload.npsHoldings
+        : [];
+      const sgb: SgbHolding[] = Array.isArray(payload.sgbHoldings)
+        ? payload.sgbHoldings
+        : [];
+      const txs: Transaction[] = Array.isArray(payload.transactions)
+        ? payload.transactions
+        : [];
+
+      setMutualFunds(mfs);
+      setStocks(sts);
+      setDebt(dbt);
+      setNps(nps);
+      setSgb(sgb);
+      setTransactions(txs);
+
+      saveToSession(SESSION_KEYS.mutualFunds, mfs);
+      saveToSession(SESSION_KEYS.stocks, sts);
+      saveToSession(SESSION_KEYS.debt, dbt);
+      saveToSession(SESSION_KEYS.nps, nps);
+      saveToSession(SESSION_KEYS.sgb, sgb);
+      saveToSession(SESSION_KEYS.transactions, txs);
+
+      toast.success("Portfolio data imported successfully.");
+      return true;
+    } catch {
+      toast.error("Failed to import: invalid or corrupted backup file.");
+      return false;
+    }
+  }, []);
+
   // ── Clear all session data ─────────────────────────────────────────────
   const clearAllData = useCallback(() => {
     setMutualFunds([]);
@@ -689,6 +787,8 @@ export function PortfolioProvider({ children }: PortfolioProviderProps) {
         refreshNPSPrices,
         refreshSGBPrices,
         clearAllData,
+        exportData,
+        importData,
       }}
     >
       {children}
